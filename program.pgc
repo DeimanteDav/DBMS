@@ -1,0 +1,264 @@
+#include <stdio.h>
+#include <string.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+int rentalid;
+int customerid;
+int toolid;
+int quantity;
+int result;
+double price;
+double oldprice;
+char startdate[11];
+char enddate[11];
+char name[100];
+char phone[20];
+char cname[100];
+char tname[100];
+long err;
+EXEC SQL END DECLARE SECTION;
+
+void delete_rental();
+void add_customer();
+void rental_count();
+void create_rental();
+void update_tool_price();
+
+int main()
+{
+    int choice;
+
+    while (1) {
+        printf("\n=====================================\n");
+        printf(" Pasirinkite ka norite daryti\n");
+        printf("=====================================\n");
+        printf(" 1. Atsaukti nuoma\n");
+        printf(" 2. Registruoti klienta\n");
+        printf(" 3. Nuomu skaicius\n");
+        printf(" 4. Sukurti nauja nuoma\n");
+        printf(" 5. Atnaujinti irankio kaina\n");
+        printf(" 6. Baigti\n");
+        printf("-------------------------------------\n");
+        printf(" Pasirinkimas: ");
+
+        if (scanf("%d", &choice) != 1) {
+            printf(" Iveskite skaiciu!\n");
+            return 0;
+        }
+
+        switch (choice) {
+            case 1: delete_rental(); break;
+            case 2: add_customer(); break;
+            case 3: rental_count(); break;
+            case 4: create_rental(); break;
+            case 5: update_tool_price(); break;
+            case 6: return 0;
+            default: printf(" Neteisingas pasirinkimas\n");
+        }
+    }
+}
+
+void delete_rental()
+{
+    EXEC SQL CONNECT TO tool_rental USER your_user;
+    if (SQLCODE != 0) return;
+
+    printf("\nEsamos nuomos:\n");
+    printf("%-6s %-10s %-12s %-12s\n", "ID", "Customer", "Pradzia", "Pabaiga");
+    printf("------------------------------------------------\n");
+
+    EXEC SQL DECLARE rent_cur CURSOR FOR
+        SELECT rentalid, customerid, startdate, enddate
+        FROM rental
+        ORDER BY rentalid;
+
+    EXEC SQL OPEN rent_cur;
+    while (1) {
+        EXEC SQL FETCH rent_cur INTO
+            :rentalid, :customerid, :startdate, :enddate;
+        if (SQLCODE != 0) break;
+
+        printf("%-6d %-10d %-12s %-12s\n",
+               rentalid, customerid, startdate, enddate);
+    }
+    EXEC SQL CLOSE rent_cur;
+
+    printf("\nIveskite rentalid: ");
+    scanf("%d", &rentalid);
+
+    EXEC SQL DELETE FROM rental WHERE rentalid = :rentalid;
+
+    if (SQLCODE == 0) {
+        EXEC SQL COMMIT;
+        printf("Nuoma atsaukta\n");
+    } else
+        printf("SQLCODE=%ld\n", SQLCODE);
+
+    EXEC SQL DISCONNECT;
+}
+
+void add_customer()
+{
+    EXEC SQL CONNECT TO tool_rental USER your_user;
+    if (SQLCODE != 0) return;
+
+    printf("Iveskite kliento varda   : ");
+    scanf("%99s", name);
+
+    printf("Iveskite telefono numeri : ");
+    scanf("%19s", phone);
+
+    EXEC SQL
+        INSERT INTO customer(name, phone)
+        VALUES (:name, :phone);
+
+    if (SQLCODE == 0) {
+        EXEC SQL COMMIT;
+        printf("Klientas uzregistruotas\n");
+    } else
+        printf("SQLCODE=%ld\n", SQLCODE);
+
+    EXEC SQL DISCONNECT;
+}
+
+void rental_count()
+{
+    EXEC SQL CONNECT TO tool_rental USER your_user;
+    if (SQLCODE != 0) return;
+
+    EXEC SQL
+        SELECT COUNT(*)
+        INTO :result
+        FROM v_rental_summary;
+
+    if (SQLCODE == 0)
+        printf("Nuomu skaicius sistemoje : %d\n", result);
+    else
+        printf("SQLCODE=%ld\n", SQLCODE);
+
+    EXEC SQL DISCONNECT;
+}
+
+void create_rental()
+{
+    EXEC SQL CONNECT TO tool_rental USER your_user;
+    if (SQLCODE != 0) return;
+
+    printf("\nGalimi klientai:\n");
+    printf("%-6s %-20s %-15s\n", "ID", "Vardas", "Telefonas");
+    printf("-------------------------------------------\n");
+
+    EXEC SQL DECLARE cust_cur CURSOR FOR
+        SELECT customerid, name, COALESCE(phone,'-')
+        FROM customer
+        ORDER BY customerid;
+
+    EXEC SQL OPEN cust_cur;
+    while (1) {
+        EXEC SQL FETCH cust_cur INTO :customerid, :cname, :phone;
+        if (SQLCODE != 0) break;
+        printf("%-6d %-20s %-15s\n", customerid, cname, phone);
+    }
+    EXEC SQL CLOSE cust_cur;
+
+    printf("\nCustomer ID                : ");
+    scanf("%d", &customerid);
+
+    printf("Nuomos pradzia (YYYY-MM-DD): ");
+    scanf("%10s", startdate);
+
+    printf("Nuomos pabaiga (YYYY-MM-DD): ");
+    scanf("%10s", enddate);
+
+    printf("\nGalimi irankiai:\n");
+    printf("%-6s %-20s %-10s\n", "ID", "Pavadinimas", "Kaina");
+    printf("-------------------------------------------\n");
+
+    EXEC SQL DECLARE tool_cur CURSOR FOR
+        SELECT toolid, name, priceperday
+        FROM tool
+        ORDER BY toolid;
+
+    EXEC SQL OPEN tool_cur;
+    while (1) {
+        EXEC SQL FETCH tool_cur INTO :toolid, :tname, :price;
+        if (SQLCODE != 0) break;
+        printf("%-6d %-20s %-10.2f\n", toolid, tname, price);
+    }
+    EXEC SQL CLOSE tool_cur;
+
+    printf("\nTool ID  : ");
+    scanf("%d", &toolid);
+
+    printf("Kiekis   : ");
+    scanf("%d", &quantity);
+
+    EXEC SQL BEGIN;
+
+    EXEC SQL
+        INSERT INTO rental(customerid, startdate, enddate)
+        VALUES (:customerid, :startdate, :enddate)
+        RETURNING rentalid INTO :rentalid;
+
+    if (SQLCODE != 0) {
+        EXEC SQL ROLLBACK;
+        EXEC SQL DISCONNECT;
+        return;
+    }
+
+    EXEC SQL
+        INSERT INTO rentalDetail(rentalid, toolid, quantity)
+        VALUES (:rentalid, :toolid, :quantity);
+
+    if (SQLCODE == 0) {
+        EXEC SQL COMMIT;
+        printf("Nuoma sukurta. ID = %d\n", rentalid);
+    } else {
+        EXEC SQL ROLLBACK;
+        printf("Klaida. SQLCODE=%ld\n", SQLCODE);
+    }
+
+    EXEC SQL DISCONNECT;
+}
+
+void update_tool_price()
+{
+    EXEC SQL CONNECT TO tool_rental USER your_user;
+    if (SQLCODE != 0) return;
+
+    printf("\nGalimi irankiai:\n");
+    printf("%-6s %-20s %-10s\n", "ID", "Pavadinimas", "Kaina");
+    printf("-------------------------------------------\n");
+
+    EXEC SQL DECLARE tool_cur_update CURSOR FOR
+        SELECT toolid, name, priceperday
+        FROM tool
+        ORDER BY toolid;
+
+    EXEC SQL OPEN tool_cur_update;
+    while (1) {
+        EXEC SQL FETCH tool_cur_update INTO :toolid, :name, :oldprice;
+        if (SQLCODE != 0) break;
+        printf("%-6d %-20s %-10.2f\n", toolid, name, oldprice);
+    }
+    EXEC SQL CLOSE tool_cur_update;
+
+    printf("\nTool ID     : ");
+    scanf("%d", &toolid);
+
+    printf("Nauja kaina : ");
+    scanf("%lf", &price);
+
+    EXEC SQL
+        UPDATE tool
+        SET priceperday = :price
+        WHERE toolid = :toolid;
+
+    if (SQLCODE == 0) {
+        EXEC SQL COMMIT;
+        printf("Kaina atnaujinta\n");
+    } else
+        printf("SQLCODE=%ld\n", SQLCODE);
+
+    EXEC SQL DISCONNECT;
+}
